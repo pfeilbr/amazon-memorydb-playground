@@ -1,0 +1,9 @@
+version = 0.1
+[default.deploy.parameters]
+stack_name = "amazon-memorydb-playground"
+resolve_s3 = true
+s3_prefix = "amazon-memorydb-playground"
+region = "us-east-1"
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = "PrivateVpcId=\"vpc-082f2ef872e986a9a\" SubnetIds=\"subnet-0bcedaf63a72b80d3,subnet-01631f38363b29389\""
+image_repositories = []

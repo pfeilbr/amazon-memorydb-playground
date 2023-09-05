@@ -1,0 +1,196 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  lambda-memorydb
+  Sample SAM Template which creates MemoryDB cluster along with the VPC, Subnets, Security Groups and a Java Lambda function which can access the memory db cluster
+
+Parameters:
+  PrivateVpcId:
+    Description: The VPC ID that this stack will be launched in
+    Type: AWS::EC2::VPC::Id
+    Default: vpc-082f2ef872e986a9a
+
+  SubnetIds:
+    Description: Comma-delimited list of Subnet IDs
+    Type: CommaDelimitedList
+    Default: "subnet-0bcedaf63a72b80d3,subnet-01631f38363b29389" # Replace with your default Subnet IDs
+
+  # DefaultSecurityGroupId:
+  #   Description: The default Security Group ID
+  #   Type: AWS::EC2::SecurityGroup::Id
+  #   Default: sg-012ca0fab7b700e95
+
+Resources:
+  # memdbClusterVPC:
+  #   Type: AWS::EC2::VPC
+  #   Properties:
+  #     CidrBlock: 30.0.0.0/16
+  #     EnableDnsSupport: true
+  #     EnableDnsHostnames: true
+  #     InstanceTenancy: default
+  #     Tags:
+  #       - Key: Name
+  #         Value: !Join [ "-", [ !Ref "AWS::StackName","vpc" ] ]
+  # privateSubnetA:
+  #   Type: AWS::EC2::Subnet
+  #   Properties:
+  #     VpcId: !Ref memdbClusterVPC
+  #     AvailabilityZone: "us-east-1b"
+  #     CidrBlock: 30.0.1.0/23
+  #     Tags:
+  #       - Key: Name
+  #         Value: !Join [ "-", [ !Ref "AWS::StackName","privatesubnet-a" ] ]
+  # privateSubnetB:
+  #   Type: AWS::EC2::Subnet
+  #   Properties:
+  #     VpcId: !Ref memdbClusterVPC
+  #     AvailabilityZone: "us-east-1a"
+  #     CidrBlock: 30.0.2.0/23
+  #     Tags:
+  #       - Key: Name
+  #         Value: !Join [ "-", [ !Ref "AWS::StackName","privatesubnet-b" ] ]
+  memoryDBClusterSubnetGroup:
+    Type: AWS::MemoryDB::SubnetGroup
+    Properties:
+      Description: MemoryDB cluster Subnet-group
+      SubnetGroupName: my-memdb-private-subnetgroup
+      SubnetIds: !Ref SubnetIds
+
+  memoryDBClusterSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: MemoryDB cluster access
+      VpcId: !Ref PrivateVpcId
+
+  lambdaSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: lambda access
+      VpcId: !Ref PrivateVpcId
+
+  lambdaSGEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      CidrIp: 0.0.0.0/0
+      GroupId:
+        Fn::GetAtt:
+          - lambdaSG
+          - GroupId
+      IpProtocol: -1
+
+  memoryDBSGIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId:
+        Fn::GetAtt:
+          - memoryDBClusterSG
+          - GroupId
+      IpProtocol: tcp
+      ToPort: 6379
+      FromPort: 6379
+      SourceSecurityGroupId: !Ref lambdaSG
+
+  memoryDBSGEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      Description: Allow all outbound traffic
+      CidrIp: 0.0.0.0/0
+      GroupId:
+        Fn::GetAtt:
+          - memoryDBClusterSG
+          - GroupId
+      IpProtocol: -1
+
+  memoryDBCluster:
+    Type: AWS::MemoryDB::Cluster
+    Properties:
+      ClusterName: !Ref 'AWS::StackName'
+      Description: Redis cluster
+      EngineVersion: 7.0
+      ACLName: open-access
+      NodeType: db.t4g.small
+      NumReplicasPerShard: 1
+      NumShards: 1
+      SecurityGroupIds:
+        - !Ref memoryDBClusterSG
+      SubnetGroupName: !Ref memoryDBClusterSubnetGroup
+      TLSEnabled: true
+
+  TestApi:
+    Type: AWS::Serverless::Api
+    Properties:
+      StageName: dev
+      Name: test-api-gateway
+
+  # HelloWorldFunction:
+  #   Type: AWS::Serverless::Function
+  #   Properties:
+  #     CodeUri: HelloWorldFunction
+  #     Handler: helloworld.App::handleRequest
+  #     Events:
+  #       GetItem:
+  #         Type: Api
+  #         Properties:
+  #           Path: /hello
+  #           Method: GET
+  #           RestApiId: !Ref HelloWorldAPIGateway
+  #       CreateItem:
+  #         Type: Api
+  #         Properties:
+  #           Path: /hello
+  #           Method: POST
+  #           RestApiId: !Ref HelloWorldAPIGateway
+  #     VpcConfig:
+  #       SecurityGroupIds:
+  #         - !GetAtt lambdaSG.GroupId
+  #       SubnetIds: !Ref SubnetIds
+  #     Environment:
+  #       Variables:
+  #         ClusterAddress: !GetAtt memoryDBCluster.ClusterEndpoint.Address
+
+  TestLambdaFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler
+      Runtime: nodejs14.x
+      CodeUri: ./src/lambda/test-memorydb
+      Events:
+        GetResource:
+          Type: Api
+          Properties:
+            Path: /test
+            Method: get
+            RestApiId:
+              Ref: TestApi
+      VpcConfig:
+        SubnetIds: !Ref SubnetIds
+        SecurityGroupIds:
+          - !GetAtt lambdaSG.GroupId
+      Environment:
+        Variables:
+          ClusterAddress: !GetAtt memoryDBCluster.ClusterEndpoint.Address
+          ClusterPort: !GetAtt memoryDBCluster.ClusterEndpoint.Port
+
+Outputs:
+
+  memoryDBClusterArn:
+    Description: MemoryDB cluster ARN
+    Value: !GetAtt memoryDBCluster.ARN
+
+  memoryDBClusterEndpointAddress:
+    Description: MemoryDB cluster endpoint address
+    Value: !GetAtt memoryDBCluster.ClusterEndpoint.Address
+
+  memoryDBClusterEndpointPort:
+    Description: MemoryDB cluster endpoint port
+    Value: !GetAtt memoryDBCluster.ClusterEndpoint.Port
+
+  TestApi:
+    Description: "API Gateway endpoint URL for Prod stage for Hello World function"
+    Value: !Sub "https://${TestApi}.execute-api.${AWS::Region}.amazonaws.com/dev/test/"
+  TestLambdaFunctionArn:
+    Description: "Function ARN"
+    Value: !GetAtt TestLambdaFunction.Arn
+  TestLambdaFunctionIamRole:
+    Description: "Implicit IAM Role created for function"
+    Value: !GetAtt TestLambdaFunction.Arn
